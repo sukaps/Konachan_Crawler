@@ -2,66 +2,92 @@ import json
 import os
 import requests
 from datetime import datetime, timedelta
+import concurrent.futures
 
-download_folder = "C:\\Users\\Sukap\\Desktop\\konachan"
+# 文件保存路径，用双斜号
+FILE_PATH = 'C:\\Users\\Sukap\\Desktop\\test\\'
+# Konachan的链接，可改成konachan.com
+base_url = 'https://konachan.net/post.json?tags=date:{}-{}-{}&page={}'
 
-# 设置初始日期
-current_date = datetime(2024, 1, 1)
-# 获取初始月份
-current_month = current_date.strftime('%Y%m')
+current_date = datetime.strptime('2024-01-01', '%Y-%m-%d')
+current_page = 1
 
-while True:
-    # 创建当月文件夹
-    month_folder = os.path.join(download_folder, current_month)
-    if not os.path.exists(month_folder):
-        os.makedirs(month_folder)
 
-    # 格式化日期使其符合tags要求
-    formatted_date = current_date.strftime('%Y-%m-%d')
-    # 传递参数
-    url = f'https://konachan.net/post.json?tags=date:{formatted_date}&page=1'
-    response = requests.get(url)
-    # 打印状态码
-    print(f"Status Code: {response.status_code}")
-    # 打印链接
-    print(f"URL: {url}")
+#  错误日志的处理
+def error_log(error_type, msg=None, status_code=None, url=None):
+    json_path = FILE_PATH + 'error.json'
+    try:
+        with open(json_path, 'r', encoding='utf-8') as file:
+            json_data = file.read()
+            if json_data.strip():
+                json_data = json.loads(json_data)
+            else:
+                json_data = []
+    except (FileNotFoundError, json.decoder.JSONDecodeError):
+        json_data = []
 
-    # 检查是否成功获取响应
-    if response.status_code == 200:
-        try:
-            data = response.json()
-        # 处理JSON解析错误
-        except json.decoder.JSONDecodeError:
-            data = None
+    if status_code:
+        json_data.append({'error_type': error_type, 'status_code': status_code, 'msg': msg})
     else:
-        data = None
+        json_data.append({'error_type': error_type, 'msg': msg})
 
-    # 判断如果JSON数据不为空
-    if data is not None and data:
-        for item in data:
-            image_id = str(item["id"])
-            file_url = item["file_url"]
-            file_extension = file_url.split('.')[-1]
-            file_path = os.path.join(month_folder, f"{image_id}.{file_extension}")
+    with open(json_path, 'w', encoding='utf-8') as file:
+        json.dump(json_data, file, ensure_ascii=False)
 
-            print(f"ID: {image_id} 正在下载...")
-            # 将下载图片的响应命名为response_image
-            response_image = requests.get(file_url)
-            with open(file_path, 'wb') as f:
-                f.write(response_image.content)
-            print(f"ID: {image_id} 下载完成")
 
-    # 下载完成日期加一天
-    next_date = current_date + timedelta(days=1)
-    # 判断月份是否改变
-    if next_date.strftime('%Y%m') != current_month:
-        # 更新当前月份
-        current_month = next_date.strftime('%Y%m')
-        # 更新文件夹路径
-        month_folder = os.path.join(download_folder, current_month)
-        if not os.path.exists(month_folder):
-            # 在指定目录下创建新的月份文件夹
-            os.makedirs(month_folder)
+# 使用多线程下载图片
+def download_image_in_thread(url, folder_path, image_id):
+    print(f"ID: {image_id} 正在下载...")
+    response = requests.get(url)
+    if response.status_code == 200:
+        with open(os.path.join(folder_path, f"{image_id}.jpg"), 'wb') as file:
+            file.write(response.content)
+        print(f"ID: {image_id} 下载完成")
+    else:
+        # 理论编写，实际没遇到过...
+        print(f"ID: {image_id} 下载失败，状态码：{response.status_code}")
+        error_log('图片下载失败', f"ID: {image_id} 下载失败", response.status_code, url)
 
-    # 更新当前日期
-    current_date = next_date
+
+def main():
+    global current_date, current_page
+    try:
+        while True:
+            url = base_url.format(current_date.year, current_date.month, current_date.day, current_page)
+            response = requests.get(url)
+            print(f"URL: {url}")
+            print(f"Status Code: {response.status_code}")
+            response.raise_for_status()
+            data = response.json()
+
+            # 解析获取到的JSON数据
+            if not data:
+                # 将某日的全部下载完成后增加一日
+                current_date += timedelta(days=1)
+                # 重置一下页数
+                current_page = 1
+            else:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                    for item in data:
+                        post_id = item.get('id')
+                        file_url = item.get('file_url')
+                        # 创建"年 + 月"文件夹
+                        folder_name = f"{current_date.year}{current_date.month:02d}"
+                        folder_path = os.path.join(FILE_PATH, folder_name)
+                        if not os.path.exists(folder_path):
+                            os.makedirs(folder_path)
+
+                        # 提交图片下载任务给线程池
+                        executor.submit(download_image_in_thread, file_url, folder_path, post_id)
+
+                current_page += 1
+
+    except requests.exceptions.RequestException as e:
+        print(str(e))
+        error_log('请求异常', str(e))
+    except ValueError as e:
+        error_log('数据解析失败', str(e))
+
+
+if __name__ == "__main__":
+    main()
