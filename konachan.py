@@ -67,7 +67,10 @@ def main():
                 # 重置一下页数
                 current_page = 1
             else:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                # 最大线程数，按需修改（不是越大越好）
+                max_workers = 5
+                # 如果需要限制线程数，则在下一行的括号中填入 max_workers
+                with concurrent.futures.ThreadPoolExecutor() as executor:
                     for item in data:
                         post_id = item.get('id')
                         file_url = item.get('file_url')
