@@ -3,17 +3,26 @@ import os
 import requests
 from datetime import datetime, timedelta
 import concurrent.futures
+import urllib3
+from urllib3.util.retry import Retry
+from requests.adapters import HTTPAdapter
 
 # 文件保存路径，用双斜号
-FILE_PATH = 'C:\\Users\\Sukap\\Desktop\\test\\'
+FILE_PATH = 'C:\\Users\\Sukap\\Desktop\\konachan\\'
 # Konachan的链接，可改成konachan.com
 base_url = 'https://konachan.net/post.json?tags=date:{}-{}-{}&page={}'
 
-current_date = datetime.strptime('2024-01-01', '%Y-%m-%d')
+current_date = datetime.strptime('2024-01-05', '%Y-%m-%d')
 current_page = 1
 
+# 创建一个自定义的会话对象，用于添加重试逻辑
+session = requests.Session()
+retry_strategy = Retry(total=3, backoff_factor=1)
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session.mount('https://', adapter)
 
-#  错误日志的处理
+
+# 错误日志的处理
 def error_log(error_type, msg=None, status_code=None, url=None):
     json_path = FILE_PATH + 'error.json'
     try:
@@ -27,7 +36,7 @@ def error_log(error_type, msg=None, status_code=None, url=None):
         json_data = []
 
     if status_code:
-        json_data.append({'error_type': error_type, 'status_code': status_code, 'msg': msg})
+        json_data.append({'error_type': error_type, 'status_code': status_code, 'msg': msg, 'url': url})
     else:
         json_data.append({'error_type': error_type, 'msg': msg})
 
@@ -38,7 +47,7 @@ def error_log(error_type, msg=None, status_code=None, url=None):
 # 使用多线程下载图片
 def download_image_in_thread(url, folder_path, image_id):
     print(f"ID: {image_id} 正在下载...")
-    response = requests.get(url)
+    response = session.get(url)
     if response.status_code == 200:
         with open(os.path.join(folder_path, f"{image_id}.jpg"), 'wb') as file:
             file.write(response.content)
@@ -54,8 +63,8 @@ def main():
     try:
         while True:
             url = base_url.format(current_date.year, current_date.month, current_date.day, current_page)
-            response = requests.get(url)
             print(f"URL: {url}")
+            response = session.get(url)
             print(f"Status Code: {response.status_code}")
             response.raise_for_status()
             data = response.json()
@@ -68,9 +77,9 @@ def main():
                 current_page = 1
             else:
                 # 最大线程数，按需修改（不是越大越好）
-                max_workers = 5
+                max_workers = 6
                 # 如果需要限制线程数，则在下一行的括号中填入 max_workers
-                with concurrent.futures.ThreadPoolExecutor() as executor:
+                with concurrent.futures.ThreadPoolExecutor(max_workers) as executor:
                     for item in data:
                         post_id = item.get('id')
                         file_url = item.get('file_url')
@@ -83,10 +92,14 @@ def main():
                         # 提交图片下载任务给线程池
                         executor.submit(download_image_in_thread, file_url, folder_path, post_id)
 
+                    # 检查日期是否等于当前日期，如果是则停止循环
+                    if current_date.date() == datetime.now().date():
+                        break
+
                 current_page += 1
 
     except requests.exceptions.RequestException as e:
-        print(str(e))
+        print('RequestException' + str(e))
         error_log('请求异常', str(e))
     except ValueError as e:
         error_log('数据解析失败', str(e))
