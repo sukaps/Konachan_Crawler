@@ -6,6 +6,10 @@
 多线程下载（不会写异步...）  
 错误记录会以``JSON``格式保存在下载目录的``error.json``文件中，方便查看错误及重新下载  
 
+2024/02/23:   
+* 解决了报错 ``Max retries exceeded with url`` 的问题  
+* 补充了下载图片截止至当前时间  
+
 效果图请查看：  
 博客：<https://blog.sukap.cn/posts/6/>
 
